@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_key: str = ""
     supabase_service_key: str = ""
+    resend_api_key: str = ""
     dry_run: bool = True
     log_level: str = "DEBUG"
 
