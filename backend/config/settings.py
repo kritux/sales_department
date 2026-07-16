@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_whatsapp_number: str = ""   # E.164, e.g. "+14155238886"
+    twilio_phone_number: str = ""      # E.164, outbound voice calls
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"  # Rachel (default)
+    audio_base_url: str = ""           # e.g. "https://app.railway.app"; empty → <Say> fallback
     dry_run: bool = True
     log_level: str = "DEBUG"
 
