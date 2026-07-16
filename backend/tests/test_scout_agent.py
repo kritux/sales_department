@@ -123,6 +123,10 @@ def _raw_lead(**kwargs) -> dict:
 def reset_mocks():
     _mock_crewai.reset_mock(side_effect=True)
     _mock_langchain_anthropic.reset_mock(side_effect=True)
+    # Re-inject so test_director.py (which also injects crewai/langchain_anthropic)
+    # doesn't leave a different mock in sys.modules when the suite runs together.
+    sys.modules["crewai"] = _mock_crewai
+    sys.modules["langchain_anthropic"] = _mock_langchain_anthropic
     yield
 
 

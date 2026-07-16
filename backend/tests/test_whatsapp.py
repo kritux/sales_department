@@ -79,9 +79,16 @@ def _make_tenant(**kwargs) -> TenantConfig:
 
 @pytest.fixture(autouse=True)
 def reset_twilio_mock():
-    """Reset all Twilio mock state (including side_effect) between tests."""
+    """Reset all Twilio mock state between tests and re-inject into sys.modules.
+
+    Re-injection is needed when test_call_tool.py (alphabetically earlier) has
+    already registered its own twilio.rest mock via setdefault, making this
+    file's setdefault a no-op at collection time.
+    """
     _mock_twilio_rest.reset_mock(side_effect=True)
     _mock_client.reset_mock(side_effect=True)
+    _mock_twilio_rest.Client.return_value = _mock_client
+    sys.modules["twilio.rest"] = _mock_twilio_rest
     yield
 
 

@@ -96,6 +96,12 @@ def reset_mocks():
     _mock_langchain_anthropic.reset_mock(side_effect=True)
     _mock_jobs.reset_mock(side_effect=True)
     _mock_jobs.build_daily_tasks.return_value = []
+    # Re-inject mocks so other test files' collection-time sys.modules writes
+    # don't bleed in (e.g. test_jobs.py replaces crewai; test_cron.py clears scheduler).
+    sys.modules["crewai"] = _mock_crewai
+    sys.modules["langchain_anthropic"] = _mock_langchain_anthropic
+    sys.modules["scheduler"] = MagicMock()
+    sys.modules["scheduler.jobs"] = _mock_jobs
     yield
 
 

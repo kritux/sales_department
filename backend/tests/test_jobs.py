@@ -24,7 +24,7 @@ Coverage:
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -32,10 +32,24 @@ import pytest
 # Inject mock BEFORE importing jobs
 # ---------------------------------------------------------------------------
 
-_mock_crewai = MagicMock()
-sys.modules.setdefault("crewai", _mock_crewai)
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# Reuse the crewai mock if another test file (e.g. test_director.py) already
+# injected one. This avoids replacing the mock that director tests rely on.
+# Fall back to a fresh MagicMock when running this file standalone.
+_existing_crewai = sys.modules.get("crewai")
+_mock_crewai: MagicMock = (
+    _existing_crewai
+    if isinstance(_existing_crewai, MagicMock)
+    else MagicMock()
+)
+sys.modules["crewai"] = _mock_crewai
+
+# Clear any mock scheduler entries injected by other test files so we import
+# the real scheduler.jobs module below (not a MagicMock stub).
+for _key in list(sys.modules.keys()):
+    if _key == "scheduler" or _key.startswith("scheduler."):
+        del sys.modules[_key]
 
 from config.tenants import TenantConfig, LeadCriteria  # noqa: E402
 from scheduler.jobs import build_daily_tasks, _LEADS_TARGET, _FOLLOWUP_DAYS  # noqa: E402
@@ -86,6 +100,9 @@ def _task_instances():
 @pytest.fixture(autouse=True)
 def reset_crewai():
     _mock_crewai.reset_mock(side_effect=True)
+    # Re-inject so test_director.py's autouse (which also re-injects) doesn't
+    # leave a stale crewai in sys.modules between consecutive test_jobs runs.
+    sys.modules["crewai"] = _mock_crewai
     yield
 
 
