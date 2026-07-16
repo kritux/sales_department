@@ -1,0 +1,15 @@
+.env
+.env.local
+__pycache__/
+*.pyc
+venv/
+.venv/
+chroma_db/
+logs/
+*.log
+node_modules/
+.next/
+.vercel/
+*.csv
+*.sqlite
+.DS_Store

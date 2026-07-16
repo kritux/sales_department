@@ -1,0 +1,42 @@
+# Core
+fastapi==0.109.0
+uvicorn==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# Agents
+crewai==0.28.0
+langchain==0.1.9
+langchain-anthropic==0.1.1
+anthropic==0.18.1
+
+# RAG
+llama-index==0.10.12
+chromadb==0.4.22
+
+# Scraping
+playwright==1.40.0
+pandas==2.2.0
+
+# Database
+supabase==2.3.4
+sqlalchemy==2.0.25
+alembic==1.13.1
+
+# Comms
+resend==0.6.0
+twilio==8.13.0
+elevenlabs==0.3.0
+
+# Scheduler
+apscheduler==3.10.4
+pytz==2024.1
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.4
+
+# Google
+google-auth==2.27.0
+google-api-python-client==2.118.0
