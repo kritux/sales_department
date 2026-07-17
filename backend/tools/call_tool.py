@@ -41,6 +41,7 @@ from typing import Optional
 
 from config.settings import settings
 from config.tenants import TenantConfig
+from db.models import Lead
 from tools.email_tool import OutboundMessage
 
 # ---------------------------------------------------------------------------
@@ -397,6 +398,167 @@ def alert_owner_by_voice(
         return OutboundMessage(
             tenant_id=tenant_config.tenant_id,
             lead_id="director",
+            channel="voice",
+            recipient=recipient,
+            subject=None,
+            body=script,
+            sent_at=None,
+            status="failed",
+            dry_run=False,
+            message_id=None,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Prospect call (cadence step 3)
+# ---------------------------------------------------------------------------
+
+def _build_prospect_script(
+    sender_name: str,
+    company_name: str,
+    lead_company: str,
+) -> str:
+    """Build a short outbound sales call script directed at a prospect."""
+    first = sender_name.split()[0] if sender_name.strip() else sender_name
+    script = (
+        f"Hi, this is {first} calling from {company_name}. "
+        f"I recently sent you an email about how we help businesses like "
+        f"{lead_company} grow. "
+        f"I'd love to set up a quick 15-minute call to see if there's a fit. "
+        f"Please call us back or reply to my email — I look forward to connecting. "
+        f"Have a great day!"
+    )
+    words = script.split()
+    if len(words) > _MAX_SCRIPT_WORDS:
+        script = " ".join(words[:_MAX_SCRIPT_WORDS]) + "."
+    return script
+
+
+def call_prospect(
+    lead: Lead,
+    tenant_config: TenantConfig,
+    dry_run: Optional[bool] = None,
+) -> OutboundMessage:
+    """
+    Make an outbound sales call to a prospect (cadence step 3).
+
+    Args:
+        lead:          Target lead. lead.phone must be a valid E.164 number.
+        tenant_config: Provides sender identity and Twilio/ElevenLabs credentials.
+        dry_run:       True → log script + return dry_run message, no real calls.
+                       None → falls back to settings.dry_run.
+
+    Returns:
+        OutboundMessage with channel="voice" and status "sent", "failed",
+        or "dry_run".
+
+    Raises:
+        ValueError: if lead.phone is missing or not a valid E.164 number.
+    """
+    is_dry_run: bool = dry_run if dry_run is not None else settings.dry_run
+    logger = _get_logger(tenant_config.tenant_id)
+
+    recipient = lead.phone or ""
+    if not _validate_phone(recipient):
+        raise ValueError(
+            f"Invalid or missing phone for lead {lead.id!r}: {recipient!r}"
+        )
+
+    script = _build_prospect_script(
+        sender_name=tenant_config.sender_name,
+        company_name=tenant_config.company_name,
+        lead_company=lead.company_name,
+    )
+
+    if is_dry_run:
+        logger.info(
+            "[DRY_RUN] Prospect call would be made | tenant=%s | lead=%s | to=%s",
+            tenant_config.tenant_id, lead.id, _mask_phone(recipient),
+        )
+        logger.info("[DRY_RUN] SCRIPT:\n%s", script)
+        return OutboundMessage(
+            tenant_id=tenant_config.tenant_id,
+            lead_id=lead.id,
+            channel="voice",
+            recipient=recipient,
+            subject=None,
+            body=script,
+            sent_at=None,
+            status="dry_run",
+            dry_run=True,
+            message_id=None,
+        )
+
+    logger.info(
+        "Prospect call | tenant=%s | lead=%s | to=%s | words=%d",
+        tenant_config.tenant_id, lead.id, _mask_phone(recipient), len(script.split()),
+    )
+
+    try:
+        audio_bytes = _synthesize_audio(
+            script=script,
+            api_key=settings.elevenlabs_api_key,
+            voice_id=settings.elevenlabs_voice_id,
+        )
+        audio_path = _save_audio(audio_bytes, tenant_config.tenant_id)
+    except Exception as exc:
+        logger.error(
+            "ElevenLabs synthesis failed for prospect | tenant=%s | lead=%s | error=%s",
+            tenant_config.tenant_id, lead.id, exc,
+        )
+        return OutboundMessage(
+            tenant_id=tenant_config.tenant_id,
+            lead_id=lead.id,
+            channel="voice",
+            recipient=recipient,
+            subject=None,
+            body=script,
+            sent_at=None,
+            status="failed",
+            dry_run=False,
+            message_id=None,
+        )
+
+    if settings.audio_base_url:
+        audio_url = f"{settings.audio_base_url.rstrip('/')}/calls/audio/{audio_path.name}"
+        twiml = _build_twiml_play(audio_url)
+    else:
+        twiml = _build_twiml_say(script)
+
+    try:
+        call_sid = _call_with_retry(
+            to_number=recipient,
+            from_number=settings.twilio_phone_number,
+            twiml=twiml,
+            account_sid=settings.twilio_account_sid,
+            auth_token=settings.twilio_auth_token,
+        )
+        sent_at = datetime.utcnow()
+        logger.info(
+            "Prospect call placed | tenant=%s | lead=%s | sid=%s",
+            tenant_config.tenant_id, lead.id, call_sid,
+        )
+        return OutboundMessage(
+            tenant_id=tenant_config.tenant_id,
+            lead_id=lead.id,
+            channel="voice",
+            recipient=recipient,
+            subject=None,
+            body=script,
+            sent_at=sent_at,
+            status="sent",
+            dry_run=False,
+            message_id=call_sid,
+        )
+
+    except Exception as exc:
+        logger.error(
+            "Twilio prospect call failed | tenant=%s | lead=%s | error=%s",
+            tenant_config.tenant_id, lead.id, exc,
+        )
+        return OutboundMessage(
+            tenant_id=tenant_config.tenant_id,
+            lead_id=lead.id,
             channel="voice",
             recipient=recipient,
             subject=None,

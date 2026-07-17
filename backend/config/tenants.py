@@ -35,6 +35,7 @@ class TenantConfig(BaseModel):
     urgent_alert_threshold_usd: int = 5000
     rag_collection: str
     active: bool = True
+    daily_contact_cap: int = 50  # max outbound contacts (email + call) per day
 
 
 def load_tenant_config(tenant_id: str) -> TenantConfig:
