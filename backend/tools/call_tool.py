@@ -1,8 +1,9 @@
 """
-Twilio outbound voice call + ElevenLabs TTS for urgent owner alerts.
+Twilio outbound voice call + ElevenLabs TTS for owner alerts and prospect calls.
 
 Owns the voice channel of Contract 5 — OutboundMessage (TEAM.md).
-Consumed by director.py (end_of_day_sequence) when WhatsApp goes unread.
+alert_owner_by_voice: consumed by director.py when WhatsApp goes unread.
+call_prospect: consumed by email_agent.py (cadence step 3).
 
 Pipeline (production):
   1. _build_script()        — craft spoken script under 30 sec (~65 words)
@@ -12,10 +13,15 @@ Pipeline (production):
        If settings.audio_base_url set → <Play url="…/calls/audio/FILE"/>
        Otherwise             → <Say voice="alice">SCRIPT</Say> fallback
   5. _call_with_retry()     — Twilio outbound call, exponential backoff
+  6. transcribe_audio()     — stub transcription (Whisper Phase 5); saves to lead notes
 
-The <Say> fallback keeps the tool fully functional in local dev where the
-FastAPI server is not yet publicly reachable. Set AUDIO_BASE_URL in prod
-(Railway public URL) to serve the ElevenLabs audio via the <Play> verb.
+Transcription (Phase 4 stub / Phase 5 Whisper):
+  - transcribe_audio(audio_path, dry_run) → transcript string
+      DRY_RUN or no Whisper key → returns "[TRANSCRIPT UNAVAILABLE]"
+      Phase 5: calls Whisper API with audio_path
+  - save_transcript_to_lead(lead_id, tenant_id, transcript, dry_run) → bool
+      DRY_RUN or Phase 1–4 → logs transcript, returns False (not persisted)
+      Phase 5: upserts notes field in Supabase leads table
 
 Guarantees:
   - DRY_RUN gate checked before ElevenLabs or Twilio. Logs script + returns
@@ -25,9 +31,13 @@ Guarantees:
     delays 1 s → 2 s → 4 s between attempts.
   - ElevenLabs and twilio are lazy-imported (module loads fast in tests).
   - Any ElevenLabs failure returns OutboundMessage(status="failed") — never raises.
+  - Transcription errors never raise — return stub string and log the failure.
 
 Public API:
     alert_owner_by_voice(tenant_config, message, dry_run=None) -> OutboundMessage
+    call_prospect(lead, tenant_config, dry_run=None)           -> OutboundMessage
+    transcribe_audio(audio_path, dry_run=None)                 -> str
+    save_transcript_to_lead(lead_id, tenant_id, transcript, dry_run=None) -> bool
 """
 
 import html
@@ -99,6 +109,91 @@ def _mask_phone(number: str) -> str:
     """Return last-4-visible mask of a phone number for safe logging."""
     digits = number.lstrip("+")
     return f"+***{digits[-4:]}" if len(digits) >= 4 else "***"
+
+
+# ---------------------------------------------------------------------------
+# Transcription (stub — Phase 5 wires Whisper API)
+# ---------------------------------------------------------------------------
+
+_TRANSCRIPT_UNAVAILABLE = "[TRANSCRIPT UNAVAILABLE]"
+
+
+def transcribe_audio(
+    audio_path: Path,
+    dry_run: Optional[bool] = None,
+) -> str:
+    """
+    Transcribe a recorded call audio file to text.
+
+    Phase 4 stub: returns _TRANSCRIPT_UNAVAILABLE without calling any API.
+    Phase 5: call OpenAI Whisper (or AssemblyAI) with the audio_path.
+
+    Args:
+        audio_path: Path to the MP3/WAV file produced by _save_audio().
+        dry_run:    True → skip transcription, return stub. None → settings.dry_run.
+
+    Returns:
+        Transcript string, or _TRANSCRIPT_UNAVAILABLE on stub / error.
+    """
+    is_dry_run: bool = dry_run if dry_run is not None else settings.dry_run
+
+    if is_dry_run:
+        logging.getLogger(__name__).info(
+            "[DRY_RUN] transcribe_audio | path=%s → stub", audio_path,
+        )
+        return _TRANSCRIPT_UNAVAILABLE
+
+    # Phase 5 placeholder — no Whisper key configured
+    logging.getLogger(__name__).info(
+        "transcribe_audio | path=%s | Whisper not configured (Phase 5) → stub",
+        audio_path,
+    )
+    return _TRANSCRIPT_UNAVAILABLE
+
+
+def save_transcript_to_lead(
+    lead_id: str,
+    tenant_id: str,
+    transcript: str,
+    dry_run: Optional[bool] = None,
+) -> bool:
+    """
+    Append a call transcript to the lead's notes field in Supabase.
+
+    Phase 4 stub: logs the transcript locally and returns False (not persisted).
+    Phase 5: upserts `notes` on the `leads` table row via Supabase client.
+
+    Args:
+        lead_id:    UUID of the lead to update.
+        tenant_id:  Tenant scope (used for logging and Phase 5 RLS).
+        transcript: Full transcript text to append.
+        dry_run:    True → log only. None → settings.dry_run.
+
+    Returns:
+        True if successfully persisted (Phase 5+), False otherwise.
+    """
+    is_dry_run: bool = dry_run if dry_run is not None else settings.dry_run
+    logger = logging.getLogger(__name__)
+
+    prefix = f"[CALL TRANSCRIPT {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC]\n"
+    entry = prefix + transcript
+
+    if is_dry_run:
+        logger.info(
+            "[DRY_RUN] save_transcript_to_lead | tenant=%s | lead=%s | chars=%d",
+            tenant_id, lead_id, len(transcript),
+        )
+        logger.debug("[DRY_RUN] TRANSCRIPT:\n%s", entry)
+        return False
+
+    # Phase 5: Supabase upsert
+    logger.info(
+        "save_transcript_to_lead | tenant=%s | lead=%s | chars=%d | "
+        "Supabase not wired (Phase 5) → logged only",
+        tenant_id, lead_id, len(transcript),
+    )
+    logger.debug("TRANSCRIPT:\n%s", entry)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -538,6 +633,22 @@ def call_prospect(
             "Prospect call placed | tenant=%s | lead=%s | sid=%s",
             tenant_config.tenant_id, lead.id, call_sid,
         )
+
+        # Transcribe the call audio and save to lead notes
+        try:
+            transcript = transcribe_audio(audio_path, dry_run=is_dry_run)
+            save_transcript_to_lead(
+                lead_id=lead.id,
+                tenant_id=tenant_config.tenant_id,
+                transcript=transcript,
+                dry_run=is_dry_run,
+            )
+        except Exception as t_exc:
+            logger.warning(
+                "Transcription step failed (non-fatal) | lead=%s | error=%s",
+                lead.id, t_exc,
+            )
+
         return OutboundMessage(
             tenant_id=tenant_config.tenant_id,
             lead_id=lead.id,

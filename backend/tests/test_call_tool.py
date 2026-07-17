@@ -63,6 +63,7 @@ sys.modules.setdefault("twilio.rest", _mock_twilio_rest)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config.tenants import TenantConfig, LeadCriteria
+from db.models import Lead
 from tools.email_tool import OutboundMessage
 from tools.call_tool import (
     _build_script,
@@ -72,7 +73,12 @@ from tools.call_tool import (
     _synthesize_audio,
     _save_audio,
     _call_with_retry,
+    _build_prospect_script,
     alert_owner_by_voice,
+    call_prospect,
+    transcribe_audio,
+    save_transcript_to_lead,
+    _TRANSCRIPT_UNAVAILABLE,
     _MAX_RETRIES,
     _RETRY_BASE_SECONDS,
     _MAX_SCRIPT_WORDS,
@@ -690,3 +696,262 @@ class TestCallWithRetry:
         _call_with_retry("+1555", "+1444", twiml, "AC", "auth")
         create_kwargs = _mock_twilio_client.calls.create.call_args[1]
         assert create_kwargs["twiml"] == twiml
+
+
+# ---------------------------------------------------------------------------
+# Shared lead fixture for prospect / transcription tests
+# ---------------------------------------------------------------------------
+
+_NOW_STR = datetime.utcnow().isoformat()
+
+
+def _make_lead(**kwargs) -> Lead:
+    defaults = dict(
+        id="lead-001",
+        tenant_id="tenant_001",
+        company_name="Acme Plumbing",
+        address="123 Main St",
+        city="Houston",
+        state="TX",
+        phone="+17135550001",
+        email="owner@acme.com",
+        website=None,
+        rating=4.2,
+        review_count=30,
+        category="Plumber",
+        score=70,
+        status="contacted",
+        last_contact_at=None,
+        notes="",
+        created_at=_NOW_STR,
+        updated_at=_NOW_STR,
+    )
+    defaults.update(kwargs)
+    return Lead(**defaults)
+
+
+# ---------------------------------------------------------------------------
+# _build_prospect_script
+# ---------------------------------------------------------------------------
+
+
+class TestBuildProspectScript:
+    def test_returns_string(self):
+        result = _build_prospect_script("Carlos", "Growth Bizon", "Acme Plumbing")
+        assert isinstance(result, str)
+
+    def test_contains_sender_first_name(self):
+        result = _build_prospect_script("Carlos Rodriguez", "Growth Bizon", "Acme Plumbing")
+        assert "Carlos" in result
+
+    def test_contains_company_name(self):
+        result = _build_prospect_script("Carlos", "Growth Bizon", "Acme Plumbing")
+        assert "Growth Bizon" in result
+
+    def test_contains_lead_company(self):
+        result = _build_prospect_script("Carlos", "Growth Bizon", "Texas Builders")
+        assert "Texas Builders" in result
+
+    def test_within_word_budget(self):
+        result = _build_prospect_script("Carlos", "Growth Bizon", "Acme Plumbing")
+        assert len(result.split()) <= _MAX_SCRIPT_WORDS
+
+    def test_empty_sender_name_handled(self):
+        result = _build_prospect_script("", "Growth Bizon", "Acme Plumbing")
+        assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# call_prospect — dry-run
+# ---------------------------------------------------------------------------
+
+
+class TestCallProspectDryRun:
+    def setup_method(self):
+        self.tenant = _make_tenant()
+        self.lead = _make_lead()
+
+    def test_status_dry_run(self):
+        result = call_prospect(self.lead, self.tenant, dry_run=True)
+        assert result.status == "dry_run"
+
+    def test_channel_is_voice(self):
+        result = call_prospect(self.lead, self.tenant, dry_run=True)
+        assert result.channel == "voice"
+
+    def test_dry_run_flag_true(self):
+        result = call_prospect(self.lead, self.tenant, dry_run=True)
+        assert result.dry_run is True
+
+    def test_lead_id_in_result(self):
+        result = call_prospect(self.lead, self.tenant, dry_run=True)
+        assert result.lead_id == self.lead.id
+
+    def test_no_elevenlabs_call(self):
+        call_prospect(self.lead, self.tenant, dry_run=True)
+        _mock_el_client.generate.assert_not_called()
+
+    def test_no_twilio_call(self):
+        call_prospect(self.lead, self.tenant, dry_run=True)
+        _mock_twilio_client.calls.create.assert_not_called()
+
+    def test_script_in_body(self):
+        result = call_prospect(self.lead, self.tenant, dry_run=True)
+        assert len(result.body) > 0
+
+    def test_invalid_phone_raises(self):
+        lead = _make_lead(phone="not-a-phone")
+        with pytest.raises(ValueError, match="Invalid or missing phone"):
+            call_prospect(lead, self.tenant, dry_run=True)
+
+    def test_missing_phone_raises(self):
+        lead = _make_lead(phone=None)
+        with pytest.raises(ValueError):
+            call_prospect(lead, self.tenant, dry_run=True)
+
+    def test_recipient_is_lead_phone(self):
+        result = call_prospect(self.lead, self.tenant, dry_run=True)
+        assert result.recipient == self.lead.phone
+
+
+# ---------------------------------------------------------------------------
+# transcribe_audio
+# ---------------------------------------------------------------------------
+
+
+class TestTranscribeAudio:
+    def test_dry_run_returns_unavailable_stub(self, tmp_path):
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake audio")
+        result = transcribe_audio(audio_file, dry_run=True)
+        assert result == _TRANSCRIPT_UNAVAILABLE
+
+    def test_no_whisper_key_returns_stub(self, tmp_path):
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake audio")
+        # dry_run=False but no API key → stub
+        result = transcribe_audio(audio_file, dry_run=False)
+        assert result == _TRANSCRIPT_UNAVAILABLE
+
+    def test_returns_string(self, tmp_path):
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake audio")
+        result = transcribe_audio(audio_file, dry_run=True)
+        assert isinstance(result, str)
+
+    def test_settings_fallback_to_dry_run(self, tmp_path):
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake audio")
+        with patch("tools.call_tool.settings") as ms:
+            ms.dry_run = True
+            result = transcribe_audio(audio_file, dry_run=None)
+        assert result == _TRANSCRIPT_UNAVAILABLE
+
+    def test_stub_constant_is_nonempty_string(self):
+        assert isinstance(_TRANSCRIPT_UNAVAILABLE, str)
+        assert len(_TRANSCRIPT_UNAVAILABLE) > 0
+
+
+# ---------------------------------------------------------------------------
+# save_transcript_to_lead
+# ---------------------------------------------------------------------------
+
+
+class TestSaveTranscriptToLead:
+    def test_dry_run_returns_false(self):
+        result = save_transcript_to_lead("lead-001", "tenant_001", "Hello world", dry_run=True)
+        assert result is False
+
+    def test_no_supabase_returns_false(self):
+        result = save_transcript_to_lead("lead-001", "tenant_001", "Hello world", dry_run=False)
+        assert result is False
+
+    def test_returns_bool(self):
+        result = save_transcript_to_lead("lead-001", "tenant_001", "text", dry_run=True)
+        assert isinstance(result, bool)
+
+    def test_empty_transcript_ok(self):
+        result = save_transcript_to_lead("lead-001", "tenant_001", "", dry_run=True)
+        assert result is False
+
+    def test_settings_fallback(self):
+        with patch("tools.call_tool.settings") as ms:
+            ms.dry_run = True
+            result = save_transcript_to_lead("lead-001", "tenant_001", "text", dry_run=None)
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# call_prospect — transcription integration
+# ---------------------------------------------------------------------------
+
+
+class TestCallProspectTranscription:
+    """Verify transcription is invoked (or safely stubbed) after a call is placed."""
+
+    def setup_method(self):
+        self.tenant = _make_tenant()
+        self.lead = _make_lead()
+
+    def test_transcribe_audio_called_after_successful_call(self):
+        _mock_el_client.generate.return_value = iter([b"mp3data"])
+        _mock_twilio_client.calls.create.return_value.sid = "CA123"
+
+        with patch("tools.call_tool.transcribe_audio", return_value="stub") as mock_ta, \
+             patch("tools.call_tool.save_transcript_to_lead", return_value=False), \
+             patch("tools.call_tool.settings") as ms:
+            ms.dry_run = False
+            ms.elevenlabs_api_key = "key"
+            ms.elevenlabs_voice_id = "voice"
+            ms.audio_base_url = ""
+            ms.twilio_phone_number = "+10000000000"
+            ms.twilio_account_sid = "AC"
+            ms.twilio_auth_token = "tok"
+            result = call_prospect(self.lead, self.tenant, dry_run=False)
+
+        assert mock_ta.called
+
+    def test_save_transcript_called_after_successful_call(self):
+        _mock_el_client.generate.return_value = iter([b"mp3data"])
+        _mock_twilio_client.calls.create.return_value.sid = "CA123"
+
+        with patch("tools.call_tool.transcribe_audio", return_value="hello transcript"), \
+             patch("tools.call_tool.save_transcript_to_lead", return_value=False) as mock_save, \
+             patch("tools.call_tool.settings") as ms:
+            ms.dry_run = False
+            ms.elevenlabs_api_key = "key"
+            ms.elevenlabs_voice_id = "voice"
+            ms.audio_base_url = ""
+            ms.twilio_phone_number = "+10000000000"
+            ms.twilio_account_sid = "AC"
+            ms.twilio_auth_token = "tok"
+            call_prospect(self.lead, self.tenant, dry_run=False)
+
+        assert mock_save.called
+        _, kwargs = mock_save.call_args
+        # called with positional or keyword args
+        args = mock_save.call_args[0]
+        assert "hello transcript" in args or "hello transcript" in str(mock_save.call_args)
+
+    def test_transcription_failure_does_not_raise(self):
+        _mock_el_client.generate.return_value = iter([b"mp3data"])
+        _mock_twilio_client.calls.create.return_value.sid = "CA123"
+
+        with patch("tools.call_tool.transcribe_audio", side_effect=RuntimeError("fail")), \
+             patch("tools.call_tool.settings") as ms:
+            ms.dry_run = False
+            ms.elevenlabs_api_key = "key"
+            ms.elevenlabs_voice_id = "voice"
+            ms.audio_base_url = ""
+            ms.twilio_phone_number = "+10000000000"
+            ms.twilio_account_sid = "AC"
+            ms.twilio_auth_token = "tok"
+            result = call_prospect(self.lead, self.tenant, dry_run=False)
+
+        # Call still succeeded even though transcription raised
+        assert result.status == "sent"
+
+    def test_dry_run_does_not_transcribe(self):
+        with patch("tools.call_tool.transcribe_audio") as mock_ta:
+            call_prospect(self.lead, self.tenant, dry_run=True)
+        mock_ta.assert_not_called()
