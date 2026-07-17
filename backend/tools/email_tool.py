@@ -98,6 +98,12 @@ def _validate_email(address: str) -> bool:
     return bool(_EMAIL_RE.match(address.strip()))
 
 
+def _email_domain(address: str) -> str:
+    """Return only the @domain part of an email address for safe logging."""
+    at = address.find("@")
+    return address[at:] if at >= 0 else "<no-domain>"
+
+
 # ---------------------------------------------------------------------------
 # Template renderer
 # ---------------------------------------------------------------------------
@@ -266,10 +272,10 @@ def send_email(
     if is_dry_run:
         logger.info(
             "[DRY_RUN] Email would be sent | tenant=%s | lead=%s | to=%s",
-            tenant_config.tenant_id, lead.id, recipient,
+            tenant_config.tenant_id, lead.id, _email_domain(recipient),
         )
-        logger.info("[DRY_RUN] FROM:    %s", from_addr)
-        logger.info("[DRY_RUN] TO:      %s", recipient)
+        logger.info("[DRY_RUN] FROM:    %s", _email_domain(from_addr))
+        logger.info("[DRY_RUN] TO:      %s", _email_domain(recipient))
         logger.info("[DRY_RUN] SUBJECT: %s", subject)
         logger.info("[DRY_RUN] BODY:\n%s", body)
 
@@ -292,7 +298,7 @@ def send_email(
     html_body = _to_html(body)
     logger.info(
         "Sending email | tenant=%s | lead=%s | to=%s | subject=%r",
-        tenant_config.tenant_id, lead.id, recipient, subject,
+        tenant_config.tenant_id, lead.id, _email_domain(recipient), subject,
     )
 
     try:

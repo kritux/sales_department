@@ -78,6 +78,12 @@ def _validate_phone(number: str) -> bool:
     return bool(_E164_RE.match(number.strip()))
 
 
+def _mask_phone(number: str) -> str:
+    """Return last-4-visible mask of a phone number for safe logging."""
+    digits = number.lstrip("+")
+    return f"+***{digits[-4:]}" if len(digits) >= 4 else "***"
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -187,7 +193,7 @@ def send_whatsapp_summary(
     if is_dry_run:
         logger.info(
             "[DRY_RUN] WhatsApp summary would be sent | tenant=%s | to=%s",
-            tenant_config.tenant_id, recipient,
+            tenant_config.tenant_id, _mask_phone(recipient),
         )
         logger.info("[DRY_RUN] BODY:\n%s", summary_text)
 
@@ -212,7 +218,7 @@ def send_whatsapp_summary(
 
     logger.info(
         "Sending WhatsApp summary | tenant=%s | to=%s",
-        tenant_config.tenant_id, recipient,
+        tenant_config.tenant_id, _mask_phone(recipient),
     )
 
     try:

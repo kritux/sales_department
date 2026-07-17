@@ -94,6 +94,12 @@ def _validate_phone(number: str) -> bool:
     return bool(_E164_RE.match(number.strip()))
 
 
+def _mask_phone(number: str) -> str:
+    """Return last-4-visible mask of a phone number for safe logging."""
+    digits = number.lstrip("+")
+    return f"+***{digits[-4:]}" if len(digits) >= 4 else "***"
+
+
 # ---------------------------------------------------------------------------
 # Script builder
 # ---------------------------------------------------------------------------
@@ -294,7 +300,7 @@ def alert_owner_by_voice(
     if is_dry_run:
         logger.info(
             "[DRY_RUN] Voice alert would be sent | tenant=%s | to=%s",
-            tenant_config.tenant_id, recipient,
+            tenant_config.tenant_id, _mask_phone(recipient),
         )
         logger.info("[DRY_RUN] SCRIPT:\n%s", script)
 
@@ -316,7 +322,7 @@ def alert_owner_by_voice(
     # ------------------------------------------------------------------
     logger.info(
         "Voice alert | tenant=%s | to=%s | script_words=%d",
-        tenant_config.tenant_id, recipient, len(script.split()),
+        tenant_config.tenant_id, _mask_phone(recipient), len(script.split()),
     )
 
     try:
