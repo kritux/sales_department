@@ -1,6 +1,7 @@
 'use client'
 
 import Image from 'next/image'
+import Link from 'next/link'
 import type { SystemState } from '@/lib/types'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -72,11 +73,10 @@ export default function BizonNetworkHero({
   const satellites = SATELLITE_CONFIGS.map((cfg, idx) => {
     const pos = ellipsePoint(cfg.angle)
     const tenantIndex = SATELLITE_CONFIGS.slice(0, idx).filter(c => c.kind === 'tenant').length
-    const label =
-      cfg.kind === 'tenant' && tenants?.[tenantIndex]
-        ? tenants[tenantIndex].name
-        : cfg.defaultLabel
-    return { ...cfg, pos, label }
+    const tenantData  = cfg.kind === 'tenant' ? tenants?.[tenantIndex] : undefined
+    const label       = tenantData ? tenantData.name : cfg.defaultLabel
+    const href        = tenantData ? `/tenants/${tenantData.id}` : undefined
+    return { ...cfg, pos, label, href }
   })
 
   return (
@@ -165,57 +165,71 @@ export default function BizonNetworkHero({
       </div>
 
       {/* ── Satellite nodes ───────────────────────────────────────────────── */}
-      {satellites.map((node, i) => (
-        <div
-          key={node.id}
-          style={{
-            position: 'absolute',
-            left: `${(node.pos.x / W) * 100}%`,
-            top:  `${(node.pos.y / H) * 100}%`,
-            transform: 'translate(-50%, -50%)',
-            zIndex: 10,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '5px',
-            animation: 'bizonNodeAppear 0.5s ease-out both',
-            animationDelay: `${i * 0.12}s`,
-          }}
-        >
-          <div
-            style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '8px',
-              border: `1px solid ${node.kind === 'tenant' ? TAN : BLUE}`,
-              overflow: 'hidden',
-            }}
-          >
-            <Image
-              src={node.kind === 'agent' ? AGENT_IMG : TENANT_IMG}
-              alt={node.label}
-              width={40}
-              height={40}
-              style={{ objectFit: 'cover', display: 'block' }}
-            />
+      {satellites.map((node, i) => {
+        const containerStyle: React.CSSProperties = {
+          position: 'absolute',
+          left: `${(node.pos.x / W) * 100}%`,
+          top:  `${(node.pos.y / H) * 100}%`,
+          transform: 'translate(-50%, -50%)',
+          zIndex: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '5px',
+          animation: 'bizonNodeAppear 0.5s ease-out both',
+          animationDelay: `${i * 0.12}s`,
+          textDecoration: 'none',
+          cursor: node.href ? 'pointer' : 'default',
+        }
+
+        const inner = (
+          <>
+            <div
+              style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '8px',
+                border: `1px solid ${node.kind === 'tenant' ? TAN : BLUE}`,
+                overflow: 'hidden',
+                transition: 'border-color 0.15s',
+              }}
+            >
+              <Image
+                src={node.kind === 'agent' ? AGENT_IMG : TENANT_IMG}
+                alt={node.label}
+                width={40}
+                height={40}
+                style={{ objectFit: 'cover', display: 'block' }}
+              />
+            </div>
+            <span
+              style={{
+                fontSize: '10px',
+                fontFamily: 'var(--font-mono), JetBrains Mono, monospace',
+                color: node.kind === 'tenant' ? TAN : '#6b85ab',
+                whiteSpace: 'nowrap',
+                maxWidth: '72px',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                textAlign: 'center',
+                lineHeight: 1.2,
+              }}
+            >
+              {node.label}
+            </span>
+          </>
+        )
+
+        return node.href ? (
+          <Link key={node.id} href={node.href} style={containerStyle}>
+            {inner}
+          </Link>
+        ) : (
+          <div key={node.id} style={containerStyle}>
+            {inner}
           </div>
-          <span
-            style={{
-              fontSize: '10px',
-              fontFamily: 'var(--font-mono), JetBrains Mono, monospace',
-              color: node.kind === 'tenant' ? TAN : '#6b85ab',
-              whiteSpace: 'nowrap',
-              maxWidth: '72px',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              textAlign: 'center',
-              lineHeight: 1.2,
-            }}
-          >
-            {node.label}
-          </span>
-        </div>
-      ))}
+        )
+      })}
 
       {/* ── State badge ───────────────────────────────────────────────────── */}
       <div
