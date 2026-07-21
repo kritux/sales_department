@@ -29,6 +29,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
 
+from pydantic import BaseModel
+
 from config.settings import settings
 from config.tenants import TenantConfig
 from tools.call_tool import alert_owner_by_voice
@@ -39,6 +41,48 @@ if TYPE_CHECKING:
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Report models
+# ---------------------------------------------------------------------------
+
+class OutOfScopeOpportunity(BaseModel):
+    session_id: str = ""
+    company_name: str = ""
+    contact_info: str = ""
+    industry_mentioned: str = ""
+
+
+class DailyReport(BaseModel):
+    tenant_id: str
+    date: str = ""
+    leads_found: int = 0
+    emails_sent: int = 0
+    meetings_booked: int = 0
+    out_of_scope_opportunities: List[OutOfScopeOpportunity] = []
+    summary_text: str = ""
+
+
+def format_whatsapp_summary(report: DailyReport) -> str:
+    """
+    Format a DailyReport into a WhatsApp-ready summary string.
+    Out-of-scope opportunities are surfaced as a separate section
+    so the owner can decide whether to pursue them personally.
+    """
+    lines = [report.summary_text] if report.summary_text else []
+    if report.out_of_scope_opportunities:
+        count = len(report.out_of_scope_opportunities)
+        lines.append(f"\n⚠️ Out-of-scope opportunities ({count}):")
+        for opp in report.out_of_scope_opportunities:
+            entry = f"  • {opp.company_name or 'Unknown'}"
+            if opp.industry_mentioned:
+                entry += f" [{opp.industry_mentioned}]"
+            if opp.contact_info:
+                entry += f" — {opp.contact_info}"
+            lines.append(entry)
+        lines.append("→ Review and decide whether to pursue.")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +237,7 @@ def end_of_day_sequence(
     report_summary: str,
     dry_run: Optional[bool] = None,
     _wa_wait_seconds: int = 900,
+    daily_report: Optional[DailyReport] = None,
 ) -> None:
     """
     Send the daily WhatsApp summary; escalate to voice call if unread after wait.
@@ -206,13 +251,21 @@ def end_of_day_sequence(
         dry_run:          True → dry-run both WhatsApp and voice. None → settings.
         _wa_wait_seconds: Seconds to wait for read receipt before escalating.
                           Default 900 (15 min). Override to 0 in tests.
+        daily_report:     Structured report; when provided its formatted summary
+                          (including out-of-scope opportunities) is sent instead
+                          of raw report_summary.
     """
     logger.info(
         "end_of_day_sequence | tenant=%s | dry_run=%s | wait=%ds",
         tenant_config.tenant_id, dry_run, _wa_wait_seconds,
     )
 
-    wa_msg = send_whatsapp_summary(tenant_config, report_summary, dry_run=dry_run)
+    wa_summary = (
+        format_whatsapp_summary(daily_report)
+        if daily_report is not None
+        else report_summary
+    )
+    wa_msg = send_whatsapp_summary(tenant_config, wa_summary, dry_run=dry_run)
     logger.info(
         "WhatsApp result | tenant=%s | status=%s | sid=%s",
         tenant_config.tenant_id, wa_msg.status, wa_msg.message_id,

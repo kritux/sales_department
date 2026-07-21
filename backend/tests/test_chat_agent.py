@@ -79,6 +79,7 @@ from agents.cierre.chat_agent import (  # noqa: E402
     _SONNET_TURN_THRESHOLD,
     _DRY_RUN_REPLY,
     _BUYING_INTENTS,
+    _VALID_INTENTS,
 )
 
 
@@ -122,6 +123,7 @@ _FOUND_RAG = MagicMock(found=True, context="We offer web design from $800.", chu
 def reset_mocks():
     _mock_crewai.reset_mock(side_effect=True)
     _mock_langchain_anthropic.reset_mock(side_effect=True)
+    _mock_llm_instance.invoke.side_effect = None
     _mock_llm_instance.invoke.return_value = MagicMock(
         content='{"reply": "Thanks for reaching out!", "intent": "neutral"}'
     )
@@ -521,3 +523,92 @@ class TestBuildChatAgent:
         _, kwargs = _mock_crewai.Agent.call_args
         assert "Soldadura Corp" in kwargs["goal"]
         assert "Growth Bizon" not in kwargs["goal"]
+
+
+# ---------------------------------------------------------------------------
+# Out-of-scope opportunity intent
+# ---------------------------------------------------------------------------
+
+
+class TestOutOfScopeIntent:
+    """
+    Covers the out_of_scope_opportunity intent path:
+    leads in non-target industries are escalated to the owner
+    instead of being declined.
+    """
+
+    def setup_method(self):
+        self.tenant = _make_tenant(
+            lead_criteria=LeadCriteria(industries=["contractor", "roofing"])
+        )
+
+    def test_out_of_scope_is_a_valid_intent(self):
+        assert "out_of_scope_opportunity" in _VALID_INTENTS
+
+    def test_out_of_scope_not_a_buying_intent(self):
+        assert "out_of_scope_opportunity" not in _BUYING_INTENTS
+
+    def test_parse_returns_out_of_scope_intent(self):
+        raw = '{"reply": "Lo evaluamos como caso personalizado.", "intent": "out_of_scope_opportunity"}'
+        result = _parse_llm_response(raw)
+        assert result["intent"] == "out_of_scope_opportunity"
+
+    def test_out_of_scope_sets_escalate_to_owner(self):
+        _mock_llm_instance.invoke.return_value = MagicMock(
+            content='{"reply": "Lo evaluamos con el equipo.", "intent": "out_of_scope_opportunity"}'
+        )
+        with patch("agents.cierre.chat_agent.query_rag", return_value=_NOT_FOUND_RAG):
+            result = generate_reply("Tengo un restaurante mexicano", [], self.tenant, dry_run=False)
+        assert result.escalate_to_owner is True
+
+    def test_out_of_scope_does_not_trigger_handoff(self):
+        _mock_llm_instance.invoke.return_value = MagicMock(
+            content='{"reply": "Lo evaluamos.", "intent": "out_of_scope_opportunity"}'
+        )
+        with patch("agents.cierre.chat_agent.query_rag", return_value=_NOT_FOUND_RAG):
+            result = generate_reply("Tengo un restaurante", [], self.tenant, dry_run=False)
+        assert result.handoff_triggered is False
+
+    def test_out_of_scope_does_not_set_buying_intent(self):
+        _mock_llm_instance.invoke.return_value = MagicMock(
+            content='{"reply": "Lo evaluamos.", "intent": "out_of_scope_opportunity"}'
+        )
+        with patch("agents.cierre.chat_agent.query_rag", return_value=_NOT_FOUND_RAG):
+            result = generate_reply("Tengo una barbería", [], self.tenant, dry_run=False)
+        assert result.buying_intent is False
+
+    def test_in_scope_industry_does_not_set_escalate(self):
+        _mock_llm_instance.invoke.return_value = MagicMock(
+            content='{"reply": "We help contractors.", "intent": "neutral"}'
+        )
+        with patch("agents.cierre.chat_agent.query_rag", return_value=_NOT_FOUND_RAG):
+            result = generate_reply("I'm a contractor", [], self.tenant, dry_run=False)
+        assert result.escalate_to_owner is False
+
+    def test_dry_run_escalate_to_owner_is_false(self):
+        with patch("agents.cierre.chat_agent.query_rag", return_value=_NOT_FOUND_RAG):
+            result = generate_reply("Tengo un restaurante", [], self.tenant, dry_run=True)
+        assert result.escalate_to_owner is False
+
+    def test_system_prompt_includes_out_of_scope_intent_label(self):
+        prompt = _build_system_prompt(self.tenant, "")
+        assert "out_of_scope_opportunity" in prompt
+
+    def test_system_prompt_includes_target_industries(self):
+        prompt = _build_system_prompt(self.tenant, "")
+        assert "contractor" in prompt
+
+    def test_system_prompt_includes_do_not_decline_rule(self):
+        prompt = _build_system_prompt(self.tenant, "")
+        assert "door" in prompt.lower() or "decline" in prompt.lower() or "personalized" in prompt.lower()
+
+    def test_chat_reply_model_includes_escalate_field(self):
+        reply = ChatReply(session_id="s", reply="Hi", intent="out_of_scope_opportunity")
+        assert hasattr(reply, "escalate_to_owner")
+        assert reply.escalate_to_owner is False
+
+    def test_error_path_escalate_is_false(self):
+        _mock_llm_instance.invoke.side_effect = RuntimeError("oops")
+        with patch("agents.cierre.chat_agent.query_rag", return_value=_NOT_FOUND_RAG):
+            result = generate_reply("Hi", [], self.tenant, dry_run=False)
+        assert result.escalate_to_owner is False

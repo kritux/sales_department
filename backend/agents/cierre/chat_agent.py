@@ -62,7 +62,10 @@ logger = logging.getLogger(__name__)
 
 _SONNET_TURN_THRESHOLD = 5
 _BUYING_INTENTS = frozenset({"interested", "meeting_request"})
-_VALID_INTENTS = frozenset({"neutral", "interested", "objecting", "meeting_request"})
+_VALID_INTENTS = frozenset({
+    "neutral", "interested", "objecting", "meeting_request",
+    "out_of_scope_opportunity",
+})
 _DRY_RUN_REPLY = (
     "[DRY_RUN] Hi! I'm {sender_name} from {company_name}. "
     "How can I help you today?"
@@ -81,9 +84,13 @@ class ChatMessage(BaseModel):
 class ChatReply(BaseModel):
     session_id: str
     reply: str
-    intent: Literal["neutral", "interested", "objecting", "meeting_request"] = "neutral"
+    intent: Literal[
+        "neutral", "interested", "objecting", "meeting_request",
+        "out_of_scope_opportunity",
+    ] = "neutral"
     buying_intent: bool = False
     handoff_triggered: bool = False
+    escalate_to_owner: bool = False
     rag_found: bool = False
 
 
@@ -105,10 +112,27 @@ def _build_system_prompt(tenant_config: TenantConfig, rag_context: str) -> str:
         else f"You represent {tenant_config.company_name}. Answer professionally."
     )
 
+    industries = (
+        getattr(tenant_config.lead_criteria, "industries", None) or []
+        if tenant_config.lead_criteria
+        else []
+    )
+    targeting_block = ""
+    if industries:
+        targeting_block = (
+            f"Target industries: {', '.join(industries)}.\n"
+            "If the prospect is in a DIFFERENT industry: do NOT decline or close the door. "
+            "Respond warmly — say this type of project is handled as a personalized case "
+            "and that you need to check with the team/CEO to evaluate if you can take it on. "
+            "Ask for their contact info (name + phone or email) if not yet provided. "
+            "Let them know someone will follow up. Set intent to 'out_of_scope_opportunity'.\n\n"
+        )
+
     return (
         f"You are {tenant_config.sender_name}, a sales representative at "
         f"{tenant_config.company_name}. {lang_rule}\n\n"
         f"{knowledge}\n\n"
+        f"{targeting_block}"
         "STRICT RULES:\n"
         "1. Keep replies SHORT — 1 to 3 sentences maximum. This is chat, not email.\n"
         "2. Be natural and conversational — never robotic or scripted.\n"
@@ -118,12 +142,13 @@ def _build_system_prompt(tenant_config: TenantConfig, rag_context: str) -> str:
         "6. When the prospect wants to schedule — set intent to 'meeting_request'.\n"
         "7. Answer what was asked, then ask ONE follow-up question — never info-dump.\n\n"
         "You MUST respond with a single valid JSON object:\n"
-        '{"reply": "your text here", "intent": "neutral|interested|objecting|meeting_request"}\n\n'
+        '{"reply": "your text here", "intent": "neutral|interested|objecting|meeting_request|out_of_scope_opportunity"}\n\n'
         "intent values:\n"
-        "  neutral         — exploring or asking general questions\n"
-        "  interested      — expressed positive interest in moving forward\n"
-        "  objecting       — raised a concern about price, fit, or trust\n"
-        "  meeting_request — asked to schedule a call, demo, or meeting\n\n"
+        "  neutral                  — exploring or asking general questions\n"
+        "  interested               — expressed positive interest in moving forward\n"
+        "  objecting                — raised a concern about price, fit, or trust\n"
+        "  meeting_request          — asked to schedule a call, demo, or meeting\n"
+        "  out_of_scope_opportunity — prospect outside target industries; collected their info for owner review\n\n"
         "Output ONLY the JSON object. Nothing outside it."
     )
 
@@ -235,6 +260,7 @@ def generate_reply(
             intent="neutral",
             buying_intent=False,
             handoff_triggered=False,
+            escalate_to_owner=False,
             rag_found=rag_resp.found,
         )
 
@@ -264,6 +290,7 @@ def generate_reply(
             intent="neutral",
             buying_intent=False,
             handoff_triggered=False,
+            escalate_to_owner=False,
             rag_found=rag_resp.found,
         )
 
@@ -274,6 +301,7 @@ def generate_reply(
 
     buying_intent = intent in _BUYING_INTENTS
     handoff_triggered = intent == "meeting_request"
+    escalate_to_owner = intent == "out_of_scope_opportunity"
 
     if handoff_triggered:
         logger.info(
@@ -281,10 +309,16 @@ def generate_reply(
             "caller should invoke MeetingAgent",
             tenant_id, session_id,
         )
+    if escalate_to_owner:
+        logger.info(
+            "chat_agent: OUT_OF_SCOPE escalation | tenant=%s | session=%s — "
+            "owner should decide whether to pursue",
+            tenant_id, session_id,
+        )
 
     logger.info(
-        "chat_agent: done | tenant=%s | intent=%s | handoff=%s",
-        tenant_id, intent, handoff_triggered,
+        "chat_agent: done | tenant=%s | intent=%s | handoff=%s | escalate=%s",
+        tenant_id, intent, handoff_triggered, escalate_to_owner,
     )
 
     return ChatReply(
@@ -293,6 +327,7 @@ def generate_reply(
         intent=intent,  # type: ignore[arg-type]
         buying_intent=buying_intent,
         handoff_triggered=handoff_triggered,
+        escalate_to_owner=escalate_to_owner,
         rag_found=rag_resp.found,
     )
 
