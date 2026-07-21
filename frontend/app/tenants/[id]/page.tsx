@@ -11,15 +11,17 @@ import type { AgentActivity, LeadStatus } from '@/lib/types'
 
 // Recharts must be client-only; dynamic import with ssr:false keeps the build clean
 const TrendChart = dynamic(() => import('@/components/TrendChart'), { ssr: false })
+// Leaflet requires window — must be client-only
+const CoverageMap = dynamic(() => import('@/components/CoverageMap'), { ssr: false })
 
 // ─── Mock tenant meta (Phase 5: fetch from Supabase tenants table) ─────────────
 
-const MOCK_META: Record<string, { name: string; active: boolean; plan: string; geo: string }> = {
-  tenant_001: { name: 'Growth Bizon',  active: true,  plan: 'Pro',    geo: 'Houston, TX'     },
-  tenant_002: { name: 'Soldadura TX',  active: true,  plan: 'Starter',geo: 'San Antonio, TX' },
-  tenant_003: { name: 'Plumber Co.',   active: false, plan: 'Pro',    geo: 'Dallas, TX'      },
+const MOCK_META: Record<string, { name: string; active: boolean; plan: string; geo: string; radiusMiles: number; centerLat: number; centerLng: number }> = {
+  tenant_001: { name: 'Growth Bizon',  active: true,  plan: 'Pro',    geo: 'Houston, TX',      radiusMiles: 30, centerLat: 29.7604, centerLng: -95.3698 },
+  tenant_002: { name: 'Soldadura TX',  active: true,  plan: 'Starter',geo: 'San Antonio, TX',  radiusMiles: 25, centerLat: 29.4241, centerLng: -98.4936 },
+  tenant_003: { name: 'Plumber Co.',   active: false, plan: 'Pro',    geo: 'Dallas, TX',        radiusMiles: 20, centerLat: 32.7767, centerLng: -96.7970 },
 }
-const FALLBACK_META = { name: 'Tenant', active: true, plan: '—', geo: '—' }
+const FALLBACK_META = { name: 'Tenant', active: true, plan: '—', geo: '—', radiusMiles: 30, centerLat: 29.7604, centerLng: -95.3698 }
 
 // ─── Range config ──────────────────────────────────────────────────────────────
 
@@ -119,7 +121,18 @@ export default function TenantStatsPage({ params }: Props) {
         </div>
       </div>
 
-      {/* ── 2. Time range selector ─────────────────────────────────────────── */}
+      {/* ── 2. Coverage area map ───────────────────────────────────────────── */}
+      <Section title="Coverage area">
+        <CoverageMap
+          centerLat={meta.centerLat}
+          centerLng={meta.centerLng}
+          geoCenter={meta.geo}
+          radiusMiles={meta.radiusMiles}
+          leads={stats.map_leads}
+        />
+      </Section>
+
+      {/* ── 3. Time range selector ─────────────────────────────────────────── */}
       <div className="flex gap-1.5">
         {RANGES.map(r => (
           <button
@@ -137,7 +150,7 @@ export default function TenantStatsPage({ params }: Props) {
         ))}
       </div>
 
-      {/* ── 3. Funnel breakdown ────────────────────────────────────────────── */}
+      {/* ── 4. Funnel breakdown ────────────────────────────────────────────── */}
       <Section title="Funnel">
         <div className="flex flex-col gap-2">
           {stats.funnel.map((stage, i) => (

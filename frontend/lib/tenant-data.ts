@@ -43,6 +43,13 @@ export interface RecentLead {
   next_action: string | null
 }
 
+export interface MapLead {
+  id: string
+  company_name: string
+  lat: number
+  lng: number
+}
+
 export interface TenantStats {
   funnel: FunnelStage[]
   trend: TrendPoint[]
@@ -50,6 +57,7 @@ export interface TenantStats {
   recent_leads: RecentLead[]
   agent_activity: AgentActivity[]
   total_cost_usd: number
+  map_leads: MapLead[]
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -66,6 +74,7 @@ export function getTenantStats(_tenantId: string, range: TimeRange): TenantStats
     recent_leads:    MOCK_RECENT_LEADS,
     agent_activity:  MOCK_AGENT_ACTIVITY,
     total_cost_usd:  MOCK_AGENT_ACTIVITY.reduce((s, a) => s + a.cost_usd, 0),
+    map_leads:       MOCK_MAP_LEADS,
   }
 }
 
@@ -157,6 +166,17 @@ const MOCK_RECENT_LEADS: RecentLead[] = [
     id: 'lead-005', company_name: 'Harris County HVAC',   score: 55,
     status: 'no_response',  last_contact_at: '2026-06-10', next_action: 'WinBack in 21 days',
   },
+]
+
+// Phase 5: replace with real lat/lng from leads table (Task 1 added these fields)
+// Houston city center: 29.7604° N, -95.3698° W
+const MOCK_MAP_LEADS: MapLead[] = [
+  { id: 'lead-004', company_name: 'Lone Star Electric',   lat: 29.7404, lng: -95.3548 },
+  { id: 'lead-001', company_name: 'Acme Contractors',     lat: 29.7804, lng: -95.3898 },
+  { id: 'lead-003', company_name: 'Gulf Coast Plumbing',  lat: 29.7554, lng: -95.4198 },
+  { id: 'lead-002', company_name: 'TexBuild LLC',         lat: 29.7254, lng: -95.3298 },
+  { id: 'lead-007', company_name: 'Bayou Roofing Co.',    lat: 29.8004, lng: -95.3498 },
+  { id: 'lead-005', company_name: 'Harris County HVAC',   lat: 29.6804, lng: -95.5098 },
 ]
 
 const MOCK_AGENT_ACTIVITY: AgentActivity[] = [
