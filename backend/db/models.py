@@ -34,6 +34,8 @@ class Lead(BaseModel):
         "closed_lost",
         "no_response",
     ] = "new"
+    lat: Optional[float] = None   # WGS-84 latitude from Google Maps URL
+    lng: Optional[float] = None   # WGS-84 longitude from Google Maps URL
     last_contact_at: Optional[datetime] = None
     notes: str = ""
     created_at: datetime

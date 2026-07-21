@@ -19,11 +19,12 @@ import argparse
 import json
 import logging
 import random
+import re
 import sys
 import time
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import quote_plus
 
 from config.settings import settings
@@ -48,6 +49,9 @@ USER_AGENTS: List[str] = [
 
 # Google Maps DOM selectors — ordered by stability (most to least stable)
 _RESULT_CARD_SELECTOR = "div[role='feed'] > div > div[jsaction]"
+
+# Regex to extract lat/lng from Google Maps URL: /@lat,lng,zoom/
+_LAT_LNG_RE = re.compile(r"/@(-?\d+\.\d+),(-?\d+\.\d+),")
 _CARD_NAME_SELECTORS = [
     "div.qBF1Pd",
     "span.fontHeadlineSmall",
@@ -137,6 +141,25 @@ def _extract_city_state(address: str):
     return city.strip(), state
 
 
+def _extract_lat_lng(page) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Extract WGS-84 lat/lng from the Google Maps URL after a detail panel opens.
+
+    Google Maps updates the browser URL to /@lat,lng,zoom when displaying a
+    listing. Parsing the URL is more reliable than DOM scraping for coordinates.
+
+    Returns (lat, lng) floats, or (None, None) if the pattern is absent.
+    """
+    try:
+        url = page.url
+        m = _LAT_LNG_RE.search(url)
+        if m:
+            return float(m.group(1)), float(m.group(2))
+    except Exception:
+        pass
+    return None, None
+
+
 def _extract_detail(page) -> Dict:
     """
     Extract all available Lead fields from an open Google Maps detail panel.
@@ -188,6 +211,9 @@ def _extract_detail(page) -> Dict:
 
     city, state = _extract_city_state(address)
 
+    # Coordinates — parsed from URL, available once detail panel is open
+    lat, lng = _extract_lat_lng(page)
+
     # Phone — data-item-id="phone:tel:+1XXXXXXXXXX"
     phone = None
     try:
@@ -218,6 +244,8 @@ def _extract_detail(page) -> Dict:
         "rating": rating,
         "review_count": review_count,
         "category": category,
+        "lat": lat,
+        "lng": lng,
         "score": 0,
         "source": "google_maps",
         "status": "new",
@@ -252,6 +280,11 @@ def _dry_run_stubs(query: str, limit: int, tenant_id: str) -> List[Dict]:
     """
     now = datetime.utcnow().isoformat()
     count = min(limit, 5)
+    # Houston city center: 29.7604° N, -95.3698° W
+    # Stubs spread ±0.02° (~2 km) so coverage map shows useful dispersion
+    _BASE_LAT = 29.7604
+    _BASE_LNG = -95.3698
+    _OFFSETS = [(-0.02, 0.01), (0.01, -0.015), (0.015, 0.02), (-0.01, -0.02), (0.02, 0.005)]
     return [
         {
             "tenant_id": tenant_id,
@@ -265,6 +298,8 @@ def _dry_run_stubs(query: str, limit: int, tenant_id: str) -> List[Dict]:
             "rating": round(3.5 + (i % 3) * 0.5, 1),
             "review_count": 10 + i * 5,
             "category": "General Contractor",
+            "lat": round(_BASE_LAT + _OFFSETS[i][0], 6),
+            "lng": round(_BASE_LNG + _OFFSETS[i][1], 6),
             "score": 0,
             "source": "google_maps",
             "status": "new",

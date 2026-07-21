@@ -16,8 +16,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.maps_scraper import (
     MAX_LEADS_PER_SESSION,
     USER_AGENTS,
+    _LAT_LNG_RE,
     _dry_run_stubs,
     _extract_city_state,
+    _extract_lat_lng,
     scrape_google_maps,
 )
 
@@ -25,7 +27,7 @@ from tools.maps_scraper import (
 REQUIRED_LEAD_FIELDS = {
     "company_name", "address", "city", "state",
     "phone", "email", "website", "rating", "review_count",
-    "category", "score", "source", "status",
+    "category", "lat", "lng", "score", "source", "status",
     "last_contact_at", "notes", "created_at", "updated_at",
 }
 
@@ -224,3 +226,134 @@ class TestUserAgentRotation:
         # Statistical: with 8 agents and 20 draws, collision of all being same is negligible
         selected = {random.choice(USER_AGENTS) for _ in range(20)}
         assert len(selected) > 1
+
+
+# ---------------------------------------------------------------------------
+# Lat/lng regex
+# ---------------------------------------------------------------------------
+
+class TestLatLngRegex:
+    def test_matches_standard_url(self):
+        url = "https://www.google.com/maps/place/Acme+Co/@29.7604,-95.3698,17z/data=..."
+        m = _LAT_LNG_RE.search(url)
+        assert m is not None
+        assert float(m.group(1)) == pytest.approx(29.7604)
+        assert float(m.group(2)) == pytest.approx(-95.3698)
+
+    def test_matches_negative_lat(self):
+        url = "https://www.google.com/maps/place/Foo/@-33.8688,151.2093,15z/data=..."
+        m = _LAT_LNG_RE.search(url)
+        assert m is not None
+        assert float(m.group(1)) == pytest.approx(-33.8688)
+
+    def test_no_match_without_at_prefix(self):
+        url = "https://www.google.com/maps/search/contractor+Houston"
+        assert _LAT_LNG_RE.search(url) is None
+
+
+# ---------------------------------------------------------------------------
+# _extract_lat_lng
+# ---------------------------------------------------------------------------
+
+class TestExtractLatLng:
+    def _mock_page(self, url: str):
+        page = MagicMock()
+        page.url = url
+        return page
+
+    def test_extracts_from_valid_url(self):
+        page = self._mock_page(
+            "https://www.google.com/maps/place/Foo/@29.7604,-95.3698,17z/"
+        )
+        lat, lng = _extract_lat_lng(page)
+        assert lat == pytest.approx(29.7604)
+        assert lng == pytest.approx(-95.3698)
+
+    def test_returns_none_none_for_search_url(self):
+        page = self._mock_page("https://www.google.com/maps/search/contractor+Houston")
+        lat, lng = _extract_lat_lng(page)
+        assert lat is None
+        assert lng is None
+
+    def test_returns_none_none_on_exception(self):
+        page = MagicMock()
+        page.url = MagicMock(side_effect=Exception("browser closed"))
+        lat, lng = _extract_lat_lng(page)
+        assert lat is None
+        assert lng is None
+
+
+# ---------------------------------------------------------------------------
+# Dry-run stubs — lat/lng fields
+# ---------------------------------------------------------------------------
+
+class TestDryRunStubsLatLng:
+    def test_stubs_have_lat_field(self):
+        stubs = _dry_run_stubs("q", 3, "tenant_001")
+        for stub in stubs:
+            assert "lat" in stub
+
+    def test_stubs_have_lng_field(self):
+        stubs = _dry_run_stubs("q", 3, "tenant_001")
+        for stub in stubs:
+            assert "lng" in stub
+
+    def test_stub_lat_is_float(self):
+        stubs = _dry_run_stubs("q", 3, "tenant_001")
+        for stub in stubs:
+            assert isinstance(stub["lat"], float)
+
+    def test_stub_lng_is_float(self):
+        stubs = _dry_run_stubs("q", 3, "tenant_001")
+        for stub in stubs:
+            assert isinstance(stub["lng"], float)
+
+    def test_stub_lat_is_near_houston(self):
+        # Houston is ~29.76°N — all stubs should be within 0.1°
+        stubs = _dry_run_stubs("q", 5, "tenant_001")
+        for stub in stubs:
+            assert abs(stub["lat"] - 29.7604) < 0.1
+
+    def test_stub_lng_is_near_houston(self):
+        # Houston is ~-95.37°W — all stubs should be within 0.1°
+        stubs = _dry_run_stubs("q", 5, "tenant_001")
+        for stub in stubs:
+            assert abs(stub["lng"] - (-95.3698)) < 0.1
+
+    def test_stubs_have_distinct_coordinates(self):
+        stubs = _dry_run_stubs("q", 5, "tenant_001")
+        coords = [(s["lat"], s["lng"]) for s in stubs]
+        assert len(coords) == len(set(coords))
+
+
+# ---------------------------------------------------------------------------
+# Lead model — lat/lng fields propagate through filter_leads
+# ---------------------------------------------------------------------------
+
+class TestLatLngPassThroughFilterLeads:
+    def test_lat_lng_survive_filter_leads(self):
+        """Coordinates scraped by maps_scraper must survive into qualified Lead objects."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from tools.lead_filter import filter_leads
+        from config.tenants import LeadCriteria
+
+        criteria = LeadCriteria(
+            industries=["contractor"],
+            exclude_keywords=[],
+            min_rating=0.0,
+            min_reviews=0,
+        )
+        stubs = _dry_run_stubs("q", 2, "tenant_001")
+        # Bump review_count and remove website so stubs score above SCORE_FLOOR
+        for s in stubs:
+            s["review_count"] = 50
+            s["website"] = None
+
+        leads = filter_leads(stubs, criteria, "tenant_001")
+        assert len(leads) > 0
+        for lead in leads:
+            assert lead.lat is not None
+            assert lead.lng is not None
+            assert isinstance(lead.lat, float)
+            assert isinstance(lead.lng, float)
