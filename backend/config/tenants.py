@@ -4,9 +4,24 @@ Every agent receives a TenantConfig object. Never pass raw dicts downstream.
 Do not change fields without Tech Lead approval.
 """
 
+from datetime import datetime
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel
+
+AssetType = Literal[
+    "logo_light",
+    "logo_dark",
+    "icon",
+    "brand_colors_json",
+    "brand_fonts_json",
+]
+
+
+class BrandAsset(BaseModel):
+    asset_type: AssetType
+    file_url: str                       # Supabase Storage path or inline JSON string
+    uploaded_at: Optional[datetime] = None
 
 
 class LeadCriteria(BaseModel):
@@ -35,7 +50,8 @@ class TenantConfig(BaseModel):
     urgent_alert_threshold_usd: int = 5000
     rag_collection: str
     active: bool = True
-    daily_contact_cap: int = 50  # max outbound contacts (email + call) per day
+    daily_contact_cap: int = 50         # max outbound contacts (email + call) per day
+    brand_assets: List[BrandAsset] = [] # populated from tenant_assets table
 
 
 def load_tenant_config(tenant_id: str) -> TenantConfig:
