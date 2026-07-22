@@ -51,7 +51,7 @@ export default function RAGManager({
   const [uploadState, setUploadState] = useState<UploadState>('idle')
   const [deletingFile, setDeletingFile] = useState<string | null>(null)
 
-  const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {}
+  const authHeaders: Record<string, string> = authToken ? { Authorization: `Bearer ${authToken}` } : {}
 
   const fetchDocs = useCallback(async () => {
     setDocsLoading(true)

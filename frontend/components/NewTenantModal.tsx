@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import GeoAutocomplete from '@/components/GeoAutocomplete'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
 const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN ?? ''
@@ -80,7 +81,7 @@ export default function NewTenantModal({ onClose, onCreated }: Props) {
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
-        className="w-full max-w-lg rounded-xl flex flex-col gap-0 overflow-hidden"
+        className="w-full max-w-lg rounded-xl flex flex-col gap-0"
         style={{ border: '0.5px solid var(--border)', background: 'var(--surface)' }}
       >
         {/* Header */}
@@ -124,14 +125,18 @@ export default function NewTenantModal({ onClose, onCreated }: Props) {
 
           {/* Geo — the location where the scraper will search */}
           <Row>
-            <Field label="Scraping location" hint="City + State where the agent searches for leads">
-              <input
-                required
-                placeholder="Houston, TX"
+            <div className="flex flex-col gap-1">
+              <label className="text-2xs text-muted uppercase tracking-widest font-medium">
+                Scraping location
+                <span className="normal-case tracking-normal ml-1 text-muted/60">— city where the agent searches</span>
+              </label>
+              <GeoAutocomplete
                 value={form.geo_center}
-                onChange={set('geo_center')}
+                onChange={v => setForm(prev => ({ ...prev, geo_center: v }))}
+                placeholder="Houston, TX"
+                className="w-full px-3 py-2 rounded-md text-xs font-mono bg-transparent text-white placeholder:text-muted outline-none focus:ring-1 focus:ring-bizon-blue/60 transition-shadow"
               />
-            </Field>
+            </div>
             <Field label="Radius (miles)">
               <input
                 type="number"

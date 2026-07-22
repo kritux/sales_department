@@ -6,6 +6,7 @@ import clsx from 'clsx'
 import dynamic from 'next/dynamic'
 import BizonAvatar from '@/components/BizonAvatar'
 import StatusDot from '@/components/StatusDot'
+import GeoAutocomplete from '@/components/GeoAutocomplete'
 import { getTenantStats, type TimeRange, type FunnelStage, type RecentLead } from '@/lib/tenant-data'
 import type { AgentActivity, LeadStatus } from '@/lib/types'
 
@@ -183,13 +184,11 @@ export default function TenantStatsPage({ params }: Props) {
       >
         {geoEditing ? (
           <div className="flex flex-wrap items-center gap-2">
-            <input
-              className="flex-1 min-w-[180px] px-3 py-1.5 rounded-md text-xs font-mono bg-transparent text-white outline-none focus:ring-1 focus:ring-bizon-blue/60"
-              style={{ border: '0.5px solid var(--border)' }}
-              placeholder="Houston, TX"
+            <GeoAutocomplete
               value={geoCenter}
-              onChange={e => setGeoCenter(e.target.value)}
+              onChange={setGeoCenter}
               autoFocus
+              className="flex-1 min-w-[180px] px-3 py-1.5 rounded-md text-xs font-mono bg-transparent text-white outline-none focus:ring-1 focus:ring-bizon-blue/60"
             />
             <div className="flex items-center gap-1">
               <input
