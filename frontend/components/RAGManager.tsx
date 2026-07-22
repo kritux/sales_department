@@ -40,7 +40,10 @@ function formatDate(iso: string): string {
   }
 }
 
-export default function RAGManager({ tenantId, authToken = '' }: RAGManagerProps) {
+export default function RAGManager({
+  tenantId,
+  authToken = process.env.NEXT_PUBLIC_API_TOKEN ?? '',
+}: RAGManagerProps) {
   const [docs, setDocs] = useState<RAGDoc[]>([])
   const [docsLoading, setDocsLoading] = useState(true)
   const [docsError, setDocsError] = useState('')
