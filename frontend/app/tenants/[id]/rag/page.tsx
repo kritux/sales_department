@@ -1,16 +1,9 @@
 import Link from 'next/link'
-import RAGUploader from '@/components/RAGUploader'
+import RAGManager from '@/components/RAGManager'
 
 interface Props {
   params: { id: string }
 }
-
-const MOCK_INDEXED = [
-  { name: 'servicios.md',     chunks: 12, updated: '2026-07-10' },
-  { name: 'precios.md',       chunks: 8,  updated: '2026-07-10' },
-  { name: 'tiempos.md',       chunks: 5,  updated: '2026-07-11' },
-  { name: 'target_market.md', chunks: 9,  updated: '2026-07-12' },
-]
 
 export default function RAGPage({ params }: Props) {
   return (
@@ -29,45 +22,7 @@ export default function RAGPage({ params }: Props) {
         </p>
       </div>
 
-      {/* Upload zone */}
-      <section>
-        <h2 className="text-sm font-medium mb-3">Upload documents</h2>
-        <RAGUploader tenantId={params.id} />
-      </section>
-
-      {/* Indexed docs */}
-      <section>
-        <h2 className="text-sm font-medium mb-3">Indexed documents</h2>
-        <div className="rounded-lg overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
-          <table className="w-full text-xs font-mono">
-            <thead>
-              <tr className="bg-surface" style={{ borderBottom: '0.5px solid var(--border)' }}>
-                {['Document', 'Chunks', 'Last indexed'].map(h => (
-                  <th key={h} className="text-left px-3 py-2 text-muted font-medium uppercase tracking-widest text-2xs">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {MOCK_INDEXED.map((doc, i) => (
-                <tr
-                  key={doc.name}
-                  className="hover:bg-surface/60 transition-colors"
-                  style={{ borderBottom: i < MOCK_INDEXED.length - 1 ? '0.5px solid var(--border)' : undefined }}
-                >
-                  <td className="px-3 py-2.5">{doc.name}</td>
-                  <td className="px-3 py-2.5 text-muted">{doc.chunks}</td>
-                  <td className="px-3 py-2.5 text-muted">{doc.updated}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="text-2xs text-muted font-mono mt-2">
-          {MOCK_INDEXED.reduce((s, d) => s + d.chunks, 0)} total chunks indexed
-        </p>
-      </section>
+      <RAGManager tenantId={params.id} />
     </div>
   )
 }
