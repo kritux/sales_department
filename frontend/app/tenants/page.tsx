@@ -1,82 +1,91 @@
-import Link from 'next/link'
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
 import TenantCard from '@/components/TenantCard'
+import NewTenantModal from '@/components/NewTenantModal'
 import type { TenantConfig } from '@/lib/types'
 
-const MOCK_TENANTS: TenantConfig[] = [
-  {
-    tenant_id: 'tenant_001',
-    company_name: 'Growth Bizon',
-    timezone: 'America/Chicago',
-    language: 'en',
-    geo_radius_miles: 50,
-    geo_center: 'Houston, TX',
-    scraping_keywords: ['contractor no website Houston'],
-    lead_criteria: {
-      min_rating: 3.5, min_reviews: 10, max_reviews: null,
-      has_website: false, company_size: 'small',
-      industries: ['General Contractor'], exclude_keywords: [],
-    },
-    sender_name: 'Carlos Rodriguez',
-    sender_email: 'carlos@growthbizon.com',
-    owner_whatsapp: '+15551234567',
-    owner_name: 'Carlos',
-    urgent_alert_threshold_usd: 5000,
-    rag_collection: 'rag_tenant_001',
-    active: true,
-    daily_contact_cap: 50,
-  },
-  {
-    tenant_id: 'tenant_002',
-    company_name: 'Soldadura TX',
-    timezone: 'America/Chicago',
-    language: 'es',
-    geo_radius_miles: 40,
-    geo_center: 'San Antonio, TX',
-    scraping_keywords: ['soldadura industrial san antonio'],
-    lead_criteria: {
-      min_rating: 3.0, min_reviews: 5, max_reviews: null,
-      has_website: null, company_size: 'any',
-      industries: ['Welder'], exclude_keywords: [],
-    },
-    sender_name: 'María González',
-    sender_email: 'maria@soldaduratx.com',
-    owner_whatsapp: '+15559876543',
-    owner_name: 'María',
-    urgent_alert_threshold_usd: 3000,
-    rag_collection: 'rag_tenant_002',
-    active: true,
-    daily_contact_cap: 30,
-  },
-]
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
+const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN ?? ''
 
 export default function TenantsPage() {
+  const [tenants, setTenants] = useState<TenantConfig[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [showModal, setShowModal] = useState(false)
+
+  const fetchTenants = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const resp = await fetch(`${API_BASE}/api/v1/tenants`, {
+        headers: API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {},
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      setTenants(await resp.json())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load tenants')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchTenants() }, [fetchTenants])
+
+  const active = tenants.filter(t => t.active)
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold tracking-tight">Tenants</h1>
           <p className="text-xs text-muted font-mono mt-0.5">
-            {MOCK_TENANTS.filter(t => t.active).length} active · {MOCK_TENANTS.length} total
+            {loading ? '…' : `${active.length} active · ${tenants.length} total`}
           </p>
         </div>
-        <Link
-          href="#"
+        <button
+          onClick={() => setShowModal(true)}
           className="px-3 py-1.5 text-xs font-mono rounded-md text-white bg-bizon-blue hover:opacity-90 transition-opacity"
         >
           + New tenant
-        </Link>
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {MOCK_TENANTS.map(t => (
-          <TenantCard
-            key={t.tenant_id}
-            tenant={t}
-            leadsToday={t.tenant_id === 'tenant_001' ? 48 : 12}
-            emailsToday={t.tenant_id === 'tenant_001' ? 28 : 8}
-          />
-        ))}
-      </div>
+      {error && (
+        <p className="text-xs text-bizon-danger font-mono" data-testid="tenants-error">
+          {error}
+        </p>
+      )}
+
+      {loading && (
+        <p className="text-xs text-muted font-mono animate-pulse">Loading tenants…</p>
+      )}
+
+      {!loading && !error && tenants.length === 0 && (
+        <p className="text-xs text-muted font-mono">
+          No tenants yet. Click <span className="text-white">+ New tenant</span> to create one.
+        </p>
+      )}
+
+      {tenants.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {tenants.map(t => (
+            <TenantCard
+              key={t.tenant_id}
+              tenant={t}
+              leadsToday={0}
+              emailsToday={0}
+            />
+          ))}
+        </div>
+      )}
+
+      {showModal && (
+        <NewTenantModal
+          onClose={() => setShowModal(false)}
+          onCreated={() => { setShowModal(false); fetchTenants() }}
+        />
+      )}
     </div>
   )
 }

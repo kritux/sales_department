@@ -5,6 +5,7 @@ __pycache__/
 venv/
 .venv/
 chroma_db/
+tenants.json
 logs/
 *.log
 node_modules/
