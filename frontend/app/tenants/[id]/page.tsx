@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
 import dynamic from 'next/dynamic'
@@ -8,6 +8,9 @@ import BizonAvatar from '@/components/BizonAvatar'
 import StatusDot from '@/components/StatusDot'
 import { getTenantStats, type TimeRange, type FunnelStage, type RecentLead } from '@/lib/tenant-data'
 import type { AgentActivity, LeadStatus } from '@/lib/types'
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
+const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN ?? ''
 
 // Recharts must be client-only; dynamic import with ssr:false keeps the build clean
 const TrendChart = dynamic(() => import('@/components/TrendChart'), { ssr: false })
@@ -64,6 +67,48 @@ export default function TenantStatsPage({ params }: Props) {
   const [range, setRange] = useState<TimeRange>('1d')
   const [sortDesc, setSortDesc] = useState(true)
 
+  // Geo editor state
+  const [geoCenter, setGeoCenter]   = useState('')
+  const [geoRadius, setGeoRadius]   = useState(50)
+  const [geoEditing, setGeoEditing] = useState(false)
+  const [geoSaving, setGeoSaving]   = useState(false)
+  const [geoError, setGeoError]     = useState('')
+
+  // Fetch live tenant config for geo fields
+  useEffect(() => {
+    fetch(`${API_BASE}/api/v1/tenants/${params.id}`, {
+      headers: API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {},
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return
+        setGeoCenter(data.geo_center ?? '')
+        setGeoRadius(data.geo_radius_miles ?? 50)
+      })
+      .catch(() => {})
+  }, [params.id])
+
+  const saveGeo = useCallback(async () => {
+    setGeoSaving(true)
+    setGeoError('')
+    try {
+      const resp = await fetch(`${API_BASE}/api/v1/tenants/${params.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}),
+        },
+        body: JSON.stringify({ geo_center: geoCenter, geo_radius_miles: geoRadius }),
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      setGeoEditing(false)
+    } catch (err) {
+      setGeoError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setGeoSaving(false)
+    }
+  }, [params.id, geoCenter, geoRadius])
+
   const meta   = MOCK_META[params.id] ?? FALLBACK_META
   const stats  = getTenantStats(params.id, range)
   const leads  = [...stats.recent_leads].sort((a, b) => sortDesc ? b.score - a.score : a.score - b.score)
@@ -102,7 +147,7 @@ export default function TenantStatsPage({ params }: Props) {
               </span>
             </div>
             <p className="text-xs text-muted font-mono mt-0.5">
-              {params.id} · {meta.geo}
+              {params.id} · {geoCenter || meta.geo}
             </p>
           </div>
         </div>
@@ -121,7 +166,70 @@ export default function TenantStatsPage({ params }: Props) {
         </div>
       </div>
 
-      {/* ── 2. Coverage area map ───────────────────────────────────────────── */}
+      {/* ── 2. Scraping target (editable) ─────────────────────────────────── */}
+      <Section
+        title="Scraping target"
+        right={
+          !geoEditing ? (
+            <button
+              onClick={() => setGeoEditing(true)}
+              className="text-2xs font-mono text-muted hover:text-white transition-colors px-2 py-0.5 rounded"
+              style={{ border: '0.5px solid var(--border)' }}
+            >
+              ✏ Edit
+            </button>
+          ) : null
+        }
+      >
+        {geoEditing ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              className="flex-1 min-w-[180px] px-3 py-1.5 rounded-md text-xs font-mono bg-transparent text-white outline-none focus:ring-1 focus:ring-bizon-blue/60"
+              style={{ border: '0.5px solid var(--border)' }}
+              placeholder="Houston, TX"
+              value={geoCenter}
+              onChange={e => setGeoCenter(e.target.value)}
+              autoFocus
+            />
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min={1}
+                max={500}
+                className="w-20 px-3 py-1.5 rounded-md text-xs font-mono bg-transparent text-white outline-none focus:ring-1 focus:ring-bizon-blue/60"
+                style={{ border: '0.5px solid var(--border)' }}
+                value={geoRadius}
+                onChange={e => setGeoRadius(Number(e.target.value))}
+              />
+              <span className="text-2xs text-muted font-mono">mi</span>
+            </div>
+            <button
+              onClick={saveGeo}
+              disabled={geoSaving || !geoCenter.trim()}
+              className="px-3 py-1.5 text-xs font-mono rounded-md bg-bizon-blue text-white disabled:opacity-50 transition-opacity"
+            >
+              {geoSaving ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              onClick={() => { setGeoEditing(false); setGeoError('') }}
+              className="text-xs font-mono text-muted hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+            {geoError && (
+              <span className="text-2xs text-bizon-danger font-mono">{geoError}</span>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs font-mono text-muted">
+            <span className="text-white">{geoCenter || meta.geo}</span>
+            <span className="mx-2">·</span>
+            {geoRadius || meta.radiusMiles} mi radius
+          </p>
+        )}
+      </Section>
+
+      {/* ── 3. Coverage area map ───────────────────────────────────────────── */}
       <Section title="Coverage area">
         <CoverageMap
           centerLat={meta.centerLat}
